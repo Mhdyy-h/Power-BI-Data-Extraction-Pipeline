@@ -1,5 +1,0 @@
-2026-06-24 09:53:33,738 [INFO] === Début extraction — 20260624_095333 ===
-2026-06-24 09:53:37,471 [INFO] Extraction : 5,000,000 lignes en 3.73s
-2026-06-24 09:53:39,137 [INFO] Archive écrite : C:\Users\hajjo\OneDrive\Desktop\migration PBI\shared_folder\archives\dataset_20260624_095333.parquet (84.1 MB) en 1.67s
-2026-06-24 09:53:39,177 [INFO] Fichier latest mis à jour : C:\Users\hajjo\OneDrive\Desktop\migration PBI\shared_folder\dataset_latest.parquet
-2026-06-24 09:53:39,178 [INFO] === Pipeline terminé en 5.44s ===

@@ -1,129 +1,113 @@
-# Power BI Data Extraction Pipeline
+# Power BI Dynamic Data Extraction
 
-A solution to overcome Power BI's export limitations (~150k rows) by implementing a local ETL pipeline with a user-friendly extraction interface.
+A dynamic solution to overcome Power BI's export limitations (~150k rows). One single server handles extraction for any dashboard — no per-dashboard development needed.
 
 ## Problem
 
-Business Intelligence tools like Power BI impose strict limits on data export volumes. When analysts need millions of rows for statistics or machine learning, they hit a wall:
-
 - **Export cap**: Power BI limits exports to ~30k-150k rows
 - **Cloud dependency**: Each extraction goes through the cloud — slow and costly
-- **No scalability**: N users making individual extractions = N times the load
-- **Non-technical users**: Need a simple, one-click solution
+- **Not scalable**: N users × N dashboards = massive redundant extractions
+- **Per-dashboard development**: Traditional solutions require building a custom extraction tool for each dashboard
 
 ## Solution
 
-A **centralized ETL pipeline** extracts data once (scheduled nightly) into a local shared folder using **Apache Parquet** format. Users access the data through a desktop app or a web interface — no cloud, no re-extraction.
+A **single dynamic web server** that reads any Parquet file and automatically generates the appropriate filters and export options — no code changes required per dashboard.
 
 ```
-Database
-    ↓  (1 scheduled extraction per night)
-Python ETL Pipeline
-    ↓
-Parquet file on local shared folder (84 MB for 5M rows)
-    ↓
-┌─────────────────┬──────────────────┬────────────────┐
-│  Power BI       │  Extraction App  │  Python / R    │
-│  (dashboards)   │  (filtered CSV)  │  (ML models)   │
-└─────────────────┴──────────────────┴────────────────┘
+Power BI Dashboard (Ventes)  ──→  bouton "Extraire"
+                                       ↓
+Power BI Dashboard (Clients) ──→  bouton "Extraire"     ──→  Same server
+                                       ↓                     Same code
+Power BI Dashboard (Réseau)  ──→  bouton "Extraire"          Dynamic filters
+                                       ↓
+                              http://localhost:5050/dataset/<filename>.parquet
+                                       ↓
+                              Auto-detected filters based on column types
+                                       ↓
+                              Export: CSV / Excel / ZIP (full extraction)
 ```
+
+### How it works
+
+1. The server reads the Parquet file specified in the URL
+2. It detects column types automatically:
+   - **Text columns** (< 50 unique values) → multi-select filter
+   - **Date columns** → date range picker
+   - **Numeric columns** → displayed as summary stats
+3. The user filters and exports — choosing CSV, Excel, or full extraction (ZIP)
+
+### Adding a new dashboard
+
+1. Drop a `.parquet` file in `shared_folder/`
+2. In Power BI, add a button → Action → Web URL → `http://localhost:5050/dataset/<filename>.parquet`
+3. Done — zero code changes
 
 ## Why Parquet?
 
-Benchmark results on the same dataset:
-
-| Metric | 1M rows | 5M rows | 10M rows |
+| Metric | CSV | Parquet | Gain |
 |---|---|---|---|
-| **Write speed** (vs CSV) | 8x faster | 5x faster | 6x faster |
-| **File size** (vs CSV) | 3.4x smaller | 3.6x smaller | 3.6x smaller |
-| **Read speed** (vs CSV) | 5x faster | 7x faster | 18x faster |
-
-Read performance **scales better** with larger volumes — exactly what's needed for 2M+ row datasets.
-
-## Features
-
-### ETL Pipeline (`pipeline_extraction.py`)
-- Automated nightly extraction with timestamped archives
-- Parquet output with Snappy compression
-- Rolling archive (7 days retention)
-- Execution logs for traceability
-
-### Desktop App (`Extraction Ooredoo.bat`)
-- Filter by region, category, status, date range
-- Real-time preview (row count, totals, averages)
-- Export formats: **CSV** (fast) or **Excel** (paginated if >1M rows)
-- **Full extraction**: paginated CSV files for the complete dataset
-- File dialog to choose save location
-
-### Web Interface (`Demarrer Serveur.bat`)
-- Same features as the desktop app, accessible via browser
-- Integrates with Power BI through a URL button
-- Runs locally on `localhost:5050` — no cloud
+| Write (5M rows) | 10.6s | 2.1s | **5x faster** |
+| File size (5M rows) | 299 MB | 84 MB | **3.6x smaller** |
+| Read (5M rows) | 5.2s | 0.7s | **7x faster** |
+| Read (10M rows) | 9.7s | 0.5s | **18x faster** |
 
 ## Project Structure
 
 ```
-├── Extraction Ooredoo.bat        # Launch desktop extraction app
-├── Demarrer Serveur.bat          # Start local web server
-├── ooredoo.pbix                  # Power BI report template
-│
+├── Demarrer Serveur.bat              # Start the extraction server
+├── README.md
+├── *.pbix                            # Power BI dashboards (one per use case)
 ├── scripts/
-│   ├── app_extraction.py         # Desktop app (CustomTkinter)
-│   ├── api_extraction.py         # Web server (Flask)
-│   ├── pipeline_extraction.py    # ETL pipeline
-│   └── generate_dataset.py       # Benchmark script
-│
-├── shared_folder/                # Simulated shared network folder
-│   ├── dataset_latest.parquet    # Current dataset (5M rows)
-│   ├── archives/                 # Timestamped backups
-│   └── excel_export/             # Paginated CSV files
-│
-├── logs/                         # Pipeline execution logs
-└── docs/                         # Full documentation
+│   ├── api_extraction.py             # Dynamic web server (single codebase)
+│   └── generate_dashboards.py        # Generate test datasets
+└── shared_folder/                    # Drop Parquet files here
+    ├── dashboard_ventes.parquet      # Sales data (2M rows)
+    ├── dashboard_clients.parquet     # Customer data (1.5M rows)
+    └── dashboard_reseau.parquet      # Network data (3M rows)
 ```
 
 ## Quick Start
 
 ### Prerequisites
 ```
-pip install pandas numpy pyarrow openpyxl flask customtkinter tkcalendar
+pip install pandas numpy pyarrow openpyxl flask
 ```
 
-### 1. Generate the dataset
+### 1. Generate test datasets
 ```
-python scripts/pipeline_extraction.py
-```
-
-### 2. Use the desktop app
-```
-double-click "Extraction Ooredoo.bat"
+python scripts/generate_dashboards.py
 ```
 
-### 3. Or use the web interface
+### 2. Start the server
 ```
 double-click "Demarrer Serveur.bat"
-open http://localhost:5050
 ```
 
-### 4. Connect Power BI
-Open `ooredoo.pbix` — it reads directly from `shared_folder/dataset_latest.parquet`.
+### 3. Connect Power BI
+- Open a `.pbix` file connected to a Parquet in `shared_folder/`
+- Add a button → Action → Web URL → `http://localhost:5050/dataset/<filename>.parquet`
+- Click the button → extraction page opens with dynamic filters
 
 ## Export Options
 
-| Format | Max volume | Speed (5M rows) | Use case |
-|---|---|---|---|
-| **CSV** | Unlimited | ~10 seconds | Recommended — universal compatibility |
-| **Excel** | Auto-paginated (1M/sheet) | Several minutes | For .xlsx preference |
-| **Full extraction** | 5M+ (paginated CSV) | ~10 seconds | Complete dataset without filters |
+| Format | Speed | Use case |
+|---|---|---|
+| **CSV** | Fast (~10s for 5M rows) | Universal — open in Excel by double-click |
+| **Excel** | Slower (auto-paginated if >1M rows) | For .xlsx preference |
+| **Full extraction (ZIP)** | Fast (~10s) | Complete dataset as paginated CSV files in a ZIP |
 
 ## Tech Stack
 
 - **Python** — pandas, NumPy, PyArrow
 - **Apache Parquet** — columnar storage with Snappy compression
-- **Flask** — lightweight local web server
-- **CustomTkinter** — modern desktop UI
-- **Power BI Desktop** — dashboards and visualization
+- **Flask** — lightweight local web server with dynamic filter generation
 
-## License
+## Key Design Decisions
 
-This project was developed as an internship prototype for a Tableau-to-Power BI migration.
+| Decision | Rationale |
+|---|---|
+| Local server, no cloud | Eliminates cloud costs and latency |
+| Parquet over CSV | 7-18x faster reads, 3.6x smaller files |
+| Dynamic filter generation | One codebase serves all dashboards |
+| URL-based dataset routing | Each Power BI button points to its dataset — no selection page |
+| Browser download dialog | User chooses where to save exported files |
