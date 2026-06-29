@@ -1,0 +1,18 @@
+# Data files (too large for GitHub)
+downloads/
+shared_folder/
+*.parquet
+*.csv
+*.xlsx
+*.xls
+
+# Power BI files
+*.pbix
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp files
+~$*
+*.tmp
