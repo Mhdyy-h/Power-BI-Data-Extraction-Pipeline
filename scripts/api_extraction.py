@@ -1,7 +1,4 @@
-"""
-API locale Flask dynamique — genere les filtres automatiquement
-a partir de n'importe quel fichier Parquet.
-"""
+
 
 from flask import Flask, request, send_file, render_template_string, jsonify
 import pandas as pd
@@ -13,26 +10,97 @@ from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARED_DIR = os.path.join(BASE_DIR, "shared_folder")
+DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
 MAX_FILTER_UNIQUE = 50
+SUPPORTED_FORMATS = {".csv", ".xlsx", ".xls", ".tsv", ".json"}
 
 app = Flask(__name__)
 
 datasets = {}
 
 
-def scan_parquet_files():
+def auto_convert():
+    """Scanne downloads/ et convertit automatiquement les nouveaux fichiers en Parquet."""
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    os.makedirs(SHARED_DIR, exist_ok=True)
+    converted = 0
+
+    for f in os.listdir(DOWNLOADS_DIR):
+        ext = os.path.splitext(f)[1].lower()
+        if ext not in SUPPORTED_FORMATS:
+            continue
+
+        name = os.path.splitext(f)[0]
+        parquet_path = os.path.join(SHARED_DIR, f"{name}.parquet")
+
+        if os.path.exists(parquet_path):
+            src_time = os.path.getmtime(os.path.join(DOWNLOADS_DIR, f))
+            dst_time = os.path.getmtime(parquet_path)
+            if src_time <= dst_time:
+                continue
+
+        filepath = os.path.join(DOWNLOADS_DIR, f)
+        print(f"  Conversion : {f} -> {name}.parquet ...")
+
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(filepath, low_memory=False)
+            elif ext == ".tsv":
+                df = pd.read_csv(filepath, sep="\t", low_memory=False)
+            elif ext in (".xlsx", ".xls"):
+                df = pd.read_excel(filepath)
+            elif ext == ".json":
+                df = pd.read_json(filepath)
+            else:
+                continue
+
+            df.to_parquet(parquet_path, index=False, engine="pyarrow", compression="snappy")
+            size_in = os.path.getsize(filepath) / 1e6
+            size_out = os.path.getsize(parquet_path) / 1e6
+            print(f"    {len(df):,} lignes | {size_in:.1f} MB -> {size_out:.1f} MB")
+            converted += 1
+        except Exception as e:
+            print(f"    [ERREUR] {e}")
+
+    return converted
+
+
+SUPPORTED_EXTENSIONS = (".parquet", ".csv", ".xlsx", ".xls", ".tsv")
+
+
+def scan_data_files():
     files = {}
     for f in os.listdir(SHARED_DIR):
-        if f.endswith(".parquet"):
+        if f.lower().endswith(SUPPORTED_EXTENSIONS):
             path = os.path.join(SHARED_DIR, f)
             files[f] = {"path": path, "size": os.path.getsize(path) / 1e6}
     return files
 
 
+def read_file(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".parquet":
+        return pd.read_parquet(path)
+    elif ext == ".csv":
+        return pd.read_csv(path, low_memory=False)
+    elif ext == ".tsv":
+        return pd.read_csv(path, sep="\t", low_memory=False)
+    elif ext in (".xlsx", ".xls"):
+        return pd.read_excel(path)
+    else:
+        raise ValueError(f"Format non supporte : {ext}")
+
+
 def load_dataset(filename):
     if filename not in datasets:
         path = os.path.join(SHARED_DIR, filename)
-        df = pd.read_parquet(path)
+        df = read_file(path)
+        for col in df.columns:
+            if pd.api.types.is_object_dtype(df[col]):
+                try:
+                    df[col] = pd.to_datetime(df[col], infer_datetime_format=True)
+                except (ValueError, TypeError):
+                    pass
         cat_cols, date_cols, num_cols = detect_columns(df)
         datasets[filename] = {
             "df": df, "cat_cols": cat_cols,
@@ -312,7 +380,7 @@ HTML_CHOOSER = """
 
 @app.route("/")
 def index():
-    files = scan_parquet_files()
+    files = scan_data_files()
     if len(files) == 1:
         name = list(files.keys())[0]
         return dataset_page(name)
@@ -427,9 +495,24 @@ def api_extract_total():
 
 
 if __name__ == "__main__":
-    print("Serveur demarre sur http://localhost:5050")
-    print(f"Dossier Parquet : {SHARED_DIR}")
-    files = scan_parquet_files()
+    print("=" * 50)
+    print("Serveur - Extraction de Donnees")
+    print("=" * 50)
+
+    print(f"\nScan de {DOWNLOADS_DIR} ...")
+    n = auto_convert()
+    if n > 0:
+        print(f"{n} fichier(s) converti(s)")
+
+    print(f"\nDatasets disponibles :")
+    files = scan_data_files()
     for name, info in files.items():
         print(f"  - {name} ({info['size']:.0f} MB)")
+
+    if not files:
+        print("  Aucun dataset. Deposez des fichiers (CSV, XLSX...) dans downloads/")
+
+    print(f"\nServeur demarre sur http://localhost:5050")
+    print("Pour arreter : CTRL+C")
+    print("=" * 50)
     app.run(port=5050, debug=False)
